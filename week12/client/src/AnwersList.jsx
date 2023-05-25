@@ -1,23 +1,32 @@
-import { Button } from "react-bootstrap";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { Row, Col, Badge, Table } from "react-bootstrap";
+import { useNavigate, useParams } from "react-router-dom";
+import { Button, Row, Col, Badge, Table, Alert } from "react-bootstrap";
 import { useEffect, useState } from "react";
-import { deleteAnswer, listAnswers } from "./API";
+import { deleteAnswer, listAnswers, upVote } from "./API";
 
 function AnswersList(props) {
     const { idQuestion } = useParams();
     const navigate = useNavigate();
 
-    const [answers, setAnswers] = useState([]) ;
+    const [answers, setAnswers] = useState([]);
+    const [waiting, setWaiting] = useState(true);
+    const [errorMsg, setErrorMsg] = useState('') ;
 
-    useEffect(()=>{
-        listAnswers(idQuestion).then(list=>{
+    useEffect(() => {
+        listAnswers(idQuestion).then(list => {
             setAnswers(list);
+            setWaiting(false);
         })
     }, [idQuestion]);
 
+    // auto-delete the error message after 2 seconds
+    useEffect(()=>{
+        if(errorMsg) {
+            setTimeout(()=>{setErrorMsg('')}, 2000);
+        }
+    }, [errorMsg]);
 
-    const myQuestion = props.questions.filter((q)=>(q.id == idQuestion))[0];
+
+    const myQuestion = props.questions.filter((q) => (q.id == idQuestion))[0];
 
     const handleAdd = () => {
         navigate(`/addAnswer/${idQuestion}`);
@@ -27,24 +36,51 @@ function AnswersList(props) {
         navigate('/');
     }
 
-    const handleDelete = (id) => {
-        deleteAnswer(id) ;
-        // IN SOME WAY, WE MUST UPDATE THE LOCAL STATE, TOO... (coming soon)
+    const handleDelete = async (id) => {
+        setWaiting(true);
+        await deleteAnswer(id);
+        const list = await listAnswers(idQuestion);
+        setAnswers(list);
+        setWaiting(false);
     }
 
     const handleEdit = (id) => {
-        navigate(`/editAnswer/${idQuestion}/${id}`) ;
+        let myAnswer = answers.filter(a=>a.id==id)[0] ;
+        myAnswer = {...myAnswer, date: myAnswer.date.toISOString()};
+        navigate(`/editAnswer/${idQuestion}/${id}`, {state: myAnswer});
     }
 
-    const handleVote = (id) => {
-        props.upVoteAnswer(id);
+    const handleVote = async (id) => {
+
+        try {
+            setWaiting(true);
+
+            // advance the result ( optimistic update )
+            setAnswers((old)=>old.map(a => (a.id===id ? {...a, score:a.score+1} : a )))
+
+            // call the API for increasing the score
+            await upVote(id)
+
+
+        } catch (error) {
+            // console.log(error);
+            setErrorMsg(error.message);
+            setWaiting(false);
+        } finally {
+            // update the value shown in the component
+            const list = await listAnswers(idQuestion);
+            setAnswers(list);
+            setWaiting(false);
+
+        }
     }
 
     return <div>
-       <QuestionDetails question={myQuestion}/>
-       <AnswerDetails answers={answers} deleteAnswer={handleDelete} upVoteAnswer={handleVote} handleEdit={handleEdit} />
+        <QuestionDetails question={myQuestion} />
+        {errorMsg && <Alert variant="danger">{errorMsg}</Alert>}
+        <AnswerDetails answers={answers} deleteAnswer={handleDelete} upVoteAnswer={handleVote} handleEdit={handleEdit} waiting={waiting}/>
 
-        <p><Button onClick={handleAdd}>ADD</Button> <Button onClick={handleClose}>CLOSE</Button></p>
+        <p><Button disabled={waiting} onClick={handleAdd}>ADD</Button> <Button disabled={waiting} onClick={handleClose}>CLOSE</Button></p>
     </div>
 }
 
@@ -52,10 +88,10 @@ function QuestionDetails(props) {
     return <div>
         <Row>
             <Col md={8}>
-                <p className='lead'>{props.question.text}</p>
+                <p className='lead'>{props.question ? props.question.text : "Loading..."}</p>
             </Col>
             <Col md={4} className='text-end'>
-                Asked by <Badge pill bg='secondary'>{props.question.author}</Badge>
+                Asked by <Badge pill bg='secondary'>{props.question ? props.question.author : "Loading..."}</Badge>
             </Col>
         </Row>
 
@@ -76,7 +112,6 @@ function AnswerDetails(props) {
         sortedAnswers.sort((a, b) => -(a.score - b.score));
         sortIcon = '↓'
     }
-
 
     function sortByScore() {
         if (sorted === 'none')
@@ -100,7 +135,7 @@ function AnswerDetails(props) {
                 </tr>
             </thead>
             <tbody>
-                {sortedAnswers.map(a => <AnswerRow key={a.id} answer={a} deleteAnswer={props.deleteAnswer} upVoteAnswer={props.upVoteAnswer} handleEdit={props.handleEdit} />)}
+                {sortedAnswers.map(a => <AnswerRow key={a.id} answer={a} deleteAnswer={props.deleteAnswer} upVoteAnswer={props.upVoteAnswer} handleEdit={props.handleEdit} waiting={props.waiting}/>)}
             </tbody>
         </Table>
     </>
@@ -112,9 +147,9 @@ function AnswerRow(props) {
         <td>{props.answer.text}</td>
         <td>{props.answer.author}</td>
         <td>{props.answer.score}</td>
-        <td><Button variant='secondary' onClick={() => { props.upVoteAnswer(props.answer.id) }}>VOTE</Button>{' '}
-            <Button variant='warning' onClick={() => { props.deleteAnswer(props.answer.id) }}>DELETE</Button>{' '}
-            <Button variant='success' onClick={() => { props.handleEdit(props.answer.id) }}>EDIT</Button>
+        <td><Button disabled={props.waiting} variant='secondary' onClick={() => { props.upVoteAnswer(props.answer.id) }}>VOTE</Button>{' '}
+            <Button disabled={props.waiting} variant='warning' onClick={() => { props.deleteAnswer(props.answer.id) }}>DELETE</Button>{' '}
+            <Button disabled={props.waiting} variant='success' onClick={() => { props.handleEdit(props.answer.id) }}>EDIT</Button>
         </td>
     </tr>
 }
